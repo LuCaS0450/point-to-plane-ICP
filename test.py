@@ -11,6 +11,13 @@ translation = .1                            # max translation of the test set
 rotation = .1                               # max rotation (radians) of the test set
 
 
+def make_transform(R, t):
+    T = np.eye(4)
+    T[:3, :3] = R
+    T[:3, 3] = t
+    return T
+
+
 def rotation_matrix(axis, theta):
     axis = axis/np.sqrt(np.dot(axis, axis))
     a = np.cos(theta/2.)
@@ -19,6 +26,25 @@ def rotation_matrix(axis, theta):
     return np.array([[a*a+b*b-c*c-d*d, 2*(b*c-a*d), 2*(b*d+a*c)],
                   [2*(b*c+a*d), a*a+c*c-b*b-d*d, 2*(c*d-a*b)],
                   [2*(b*d-a*c), 2*(c*d+a*b), a*a+d*d-b*b-c*c]])
+
+
+def make_cube_points(samples_per_axis=12):
+    values = np.linspace(-0.5, 0.5, samples_per_axis)
+    aa, bb = np.meshgrid(values, values)
+
+    points = []
+    normals = []
+    for sign in (-1.0, 1.0):
+        points.append(np.column_stack([np.full(aa.size, 0.5 * sign), aa.ravel(), bb.ravel()]))
+        normals.append(np.tile([sign, 0.0, 0.0], (aa.size, 1)))
+
+        points.append(np.column_stack([aa.ravel(), np.full(aa.size, 0.5 * sign), bb.ravel()]))
+        normals.append(np.tile([0.0, sign, 0.0], (aa.size, 1)))
+
+        points.append(np.column_stack([aa.ravel(), bb.ravel(), np.full(aa.size, 0.5 * sign)]))
+        normals.append(np.tile([0.0, 0.0, sign], (aa.size, 1)))
+
+    return np.vstack(points), np.vstack(normals)
 
 
 def test_best_fit():
@@ -110,6 +136,41 @@ def test_icp():
     return
 
 
+def test_point_to_plane_icp():
+    target, target_normals = make_cube_points(samples_per_axis=14)
+
+    R = rotation_matrix(np.array([0.2, 0.7, 0.4]), 0.08)
+    t = np.array([0.05, -0.03, 0.04])
+    T_gt = make_transform(R, t)
+    source = icp.transform_points(target, np.linalg.inv(T_gt))
+
+    R_init = rotation_matrix(np.array([0.3, 0.1, 0.5]), 0.03)
+    t_init = np.array([0.02, -0.01, 0.015])
+    init_pose = np.dot(make_transform(R_init, t_init), T_gt)
+
+    start = time.time()
+    T, distances, iterations = icp.point_to_plane_icp(
+        source,
+        target,
+        target_normals=target_normals,
+        init_pose=init_pose,
+        max_iterations=50,
+        tolerance=1e-8,
+        max_correspondence_distance=0.2,
+    )
+    elapsed = time.time() - start
+
+    aligned = icp.transform_points(source, T)
+    assert np.mean(distances) < 0.01
+    assert np.mean(np.linalg.norm(aligned - target, axis=1)) < 0.01
+    assert np.allclose(T, T_gt, atol=0.03)
+
+    print('point-to-plane icp time: {:.3}, iterations: {}'.format(elapsed, iterations + 1))
+
+    return
+
+
 if __name__ == "__main__":
     test_best_fit()
     test_icp()
+    test_point_to_plane_icp()
