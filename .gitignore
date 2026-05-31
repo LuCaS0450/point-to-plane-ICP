@@ -60,6 +60,10 @@ target/
 data/
 results/
 report_rendered/
+.codex_downloads/
 
 # Local editor settings
 .vscode/
+
+# Office temporary lock files
+~$*

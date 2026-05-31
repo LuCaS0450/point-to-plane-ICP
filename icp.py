@@ -133,7 +133,16 @@ def best_fit_transform(A, B):
     return T, R, t
 
 
-def nearest_neighbor(src, dst):
+def build_nearest_neighbor_index(dst):
+    '''
+    Build a reusable nearest-neighbor index for a destination point set.
+    '''
+    neigh = NearestNeighbors(n_neighbors=1)
+    neigh.fit(dst)
+    return neigh
+
+
+def nearest_neighbor(src, dst, index=None):
     '''
     Find the nearest (Euclidean) neighbor in dst for each point in src
     Input:
@@ -147,13 +156,18 @@ def nearest_neighbor(src, dst):
     if src.shape[1] != dst.shape[1]:
         raise ValueError('src and dst must have the same point dimension')
 
+    if index is not None:
+        distances, indices = index.kneighbors(src, return_distance=True)
+        return distances.ravel(), indices.ravel()
+
     neigh = NearestNeighbors(n_neighbors=1)
     neigh.fit(dst)
     distances, indices = neigh.kneighbors(src, return_distance=True)
     return distances.ravel(), indices.ravel()
 
 
-def icp(A, B, init_pose=None, max_iterations=20, tolerance=0.001):
+def icp(A, B, init_pose=None, max_iterations=20, tolerance=0.001,
+        target_index=None):
     '''
     The Iterative Closest Point method: finds best-fit transform that maps points A on to points B
     Input:
@@ -162,6 +176,7 @@ def icp(A, B, init_pose=None, max_iterations=20, tolerance=0.001):
         init_pose: (m+1)x(m+1) homogeneous transformation
         max_iterations: exit algorithm after max_iterations
         tolerance: convergence criteria
+        target_index: optional reusable nearest-neighbor index for B
     Output:
         T: final homogeneous transformation that maps A on to B
         distances: Euclidean distances (errors) of the nearest neighbor
@@ -184,11 +199,13 @@ def icp(A, B, init_pose=None, max_iterations=20, tolerance=0.001):
     if init_pose is not None:
         src = np.dot(init_pose, src)
 
+    if target_index is None:
+        target_index = build_nearest_neighbor_index(dst[:m,:].T)
     prev_error = 0
 
     for i in range(max_iterations):
         # find the nearest neighbors between the current source and destination points
-        distances, indices = nearest_neighbor(src[:m,:].T, dst[:m,:].T)
+        distances, indices = nearest_neighbor(src[:m,:].T, dst[:m,:].T, target_index)
 
         # compute the transformation between the current source and nearest destination points
         T,_,_ = best_fit_transform(src[:m,:].T, dst[:m,indices].T)
@@ -211,7 +228,8 @@ def icp(A, B, init_pose=None, max_iterations=20, tolerance=0.001):
 def point_to_plane_icp(A, B, target_normals=None, init_pose=None,
                        max_iterations=50, tolerance=1e-6,
                        max_correspondence_distance=np.inf,
-                       min_correspondences=6, return_history=False):
+                       min_correspondences=6, return_history=False,
+                       target_index=None):
     '''
     Point-to-plane Iterative Closest Point for 3D rigid registration.
 
@@ -226,6 +244,7 @@ def point_to_plane_icp(A, B, target_normals=None, init_pose=None,
         max_correspondence_distance: reject pairs above this Euclidean distance
         min_correspondences: minimum valid pairs required to solve the system
         return_history: if True, append a list of per-iteration diagnostics
+        target_index: optional reusable nearest-neighbor index for B
     Output:
         T: 4x4 final homogeneous transformation mapping A onto B
         distances: final nearest-neighbor Euclidean distances
@@ -257,13 +276,15 @@ def point_to_plane_icp(A, B, target_normals=None, init_pose=None,
             raise ValueError('init_pose must be a 4x4 matrix')
 
     src = transform_points(A, T_total)
+    if target_index is None:
+        target_index = build_nearest_neighbor_index(B)
     prev_error = None
     history = []
     distances = np.full(A.shape[0], np.inf)
     i = -1
 
     for i in range(max_iterations):
-        distances, indices = nearest_neighbor(src, B)
+        distances, indices = nearest_neighbor(src, B, target_index)
         mask = distances <= max_correspondence_distance
         if np.count_nonzero(mask) < min_correspondences:
             break
@@ -298,7 +319,7 @@ def point_to_plane_icp(A, B, target_normals=None, init_pose=None,
             break
         prev_error = mean_error
 
-    distances, _ = nearest_neighbor(src, B)
+    distances, _ = nearest_neighbor(src, B, target_index)
     if return_history:
         return T_total, distances, i, history
     return T_total, distances, i

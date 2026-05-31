@@ -5,6 +5,7 @@ import numpy as np
 
 import icp
 from benchmark_3dmatch import find_scene_paths, load_fragment, parse_gt_log, transform_rmse
+from demo_visualization import save_before_after_demo
 
 try:
     import open3d as o3d
@@ -39,8 +40,13 @@ def main():
     parser.add_argument('--max-iterations', type=int, default=50)
     parser.add_argument('--max-correspondence-distance', type=float, default=0.20)
     parser.add_argument('--tolerance', type=float, default=1e-6)
-    parser.add_argument('--no-window', action='store_true', help='run ICP and print metrics without opening a viewer')
+    parser.add_argument('--output', default='results/3dmatch/redkitchen_demo.png')
+    parser.add_argument('--plot-points', type=int, default=6000)
+    parser.add_argument('--show-window', action='store_true', help='also open the Open3D interactive viewer')
+    parser.add_argument('--no-window', action='store_true', help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.show_window and args.no_window:
+        parser.error('--show-window and --no-window cannot be used together')
 
     fragment_dir, gt_log = find_scene_paths(args.dataset, args.scene)
     pairs = parse_gt_log(gt_log)
@@ -70,12 +76,24 @@ def main():
 
     print(f'scene: {args.scene}')
     print(f'pair: cloud_bin_{source_id}.ply -> cloud_bin_{target_id}.ply')
-    print(f'initial RMSE to ground truth: {transform_rmse(source, init_pose, gt_transform):.4f} m')
-    print(f'final RMSE to ground truth:   {transform_rmse(source, T, gt_transform):.4f} m')
+    initial_rmse = transform_rmse(source, init_pose, gt_transform)
+    final_rmse = transform_rmse(source, T, gt_transform)
+    print(f'initial RMSE to ground truth: {initial_rmse:.4f} m')
+    print(f'final RMSE to ground truth:   {final_rmse:.4f} m')
     print(f'final mean NN distance:       {float(np.mean(distances)):.4f} m')
     print(f'iterations:                   {iterations + 1}')
 
-    if args.no_window:
+    output = save_before_after_demo(
+        target,
+        initial_source,
+        aligned_source,
+        f'3DMatch {args.scene}: cloud_bin_{source_id}.ply -> cloud_bin_{target_id}.ply',
+        args.output,
+        plot_points=args.plot_points,
+    )
+    print(f'wrote {output}')
+
+    if not args.show_window:
         return
 
     target_pcd = to_pcd(target, [0.65, 0.65, 0.65])
